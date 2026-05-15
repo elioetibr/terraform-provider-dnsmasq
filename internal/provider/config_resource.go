@@ -991,8 +991,13 @@ func (r *ConfigResource) buildConfig(data *ConfigResourceModel) *dnsmasq.Config 
 			config.DNS.Interface = interfaces
 		}
 
-		// No resolv
+		// No resolv lives on GlobalConfig but is exposed under the dns {}
+		// schema block, so config.Global may not have been allocated yet
+		// when a user declares dns {} without a sibling global {} block.
 		if !data.DNS.NoResolv.IsNull() {
+			if config.Global == nil {
+				config.Global = &dnsmasq.GlobalConfig{}
+			}
 			config.Global.NoResolv = data.DNS.NoResolv.ValueBool()
 		}
 
