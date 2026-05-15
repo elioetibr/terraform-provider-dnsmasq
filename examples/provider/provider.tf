@@ -8,7 +8,7 @@ provider "dnsmasq" {
 
   # Optional: service management
   service_management {
-    enabled               = true
+    enabled                = true
     validate_before_reload = true
   }
 }

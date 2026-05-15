@@ -938,8 +938,62 @@ func (r *ConfigResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	}
 }
 
+// ImportState imports an existing dnsmasq configuration file into Terraform
+// state. The import ID is the absolute filesystem path to the existing config
+// file; everything else (id, filename, rendered_content, content_hash,
+// output_path) is derived from it so the subsequent Read sees a consistent
+// baseline for drift detection.
 func (r *ConfigResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	if r.mode == "content_only" {
+		resp.Diagnostics.AddError(
+			"Import Not Supported",
+			"dnsmasq_config cannot be imported in content_only mode; there is no file on disk to read.",
+		)
+		return
+	}
+
+	id, filename, content, contentHash, err := r.loadStateForImport(ctx, req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Import Failed", err.Error())
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("filename"), filename)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("output_path"), req.ID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("rendered_content"), string(content))...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("content_hash"), contentHash)...)
+}
+
+// loadStateForImport reads an existing config file at filePath and returns the
+// values needed to populate resource state during import. The path must be
+// absolute and the file must exist.
+func (r *ConfigResource) loadStateForImport(ctx context.Context, filePath string) (id, filename string, content []byte, contentHash string, err error) {
+	if !filepath.IsAbs(filePath) {
+		err = fmt.Errorf("import expects an absolute path to an existing dnsmasq config file, got %q", filePath)
+		return
+	}
+
+	exists, ferr := r.backend.FileExists(ctx, filePath)
+	if ferr != nil {
+		err = fmt.Errorf("failed to check configuration file: %w", ferr)
+		return
+	}
+	if !exists {
+		err = fmt.Errorf("no configuration file at %q", filePath)
+		return
+	}
+
+	content, ferr = r.backend.ReadConfig(ctx, filePath)
+	if ferr != nil {
+		err = fmt.Errorf("failed to read configuration file: %w", ferr)
+		return
+	}
+
+	id = fmt.Sprintf("%x", sha256.Sum256([]byte(filePath)))
+	contentHash = fmt.Sprintf("%x", sha256.Sum256(content))
+	filename = filepath.Base(filePath)
+	return
 }
 
 // buildConfig converts the Terraform model to a dnsmasq.Config struct.
